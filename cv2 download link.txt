@@ -1,0 +1,6 @@
+http://www.lfd.uci.edu/~gohlke/pythonlibs/#opencv
+
+https://www.scivision.co/install-opencv-python-windows/
+
+
+https://stackoverflow.com/questions/42994813/installing-opencv-on-windows-10-with-python-3-6-and-anaconda-3-6
