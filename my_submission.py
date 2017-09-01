@@ -10,6 +10,7 @@ Instructions:
 import numpy as np
 import matplotlib.pyplot as plt
 
+
 import pattern_utils
 import population_search
 
@@ -42,20 +43,21 @@ class PatternPosePopulation(population_search.Population):
         '''
  
         	# INSERT YOUR CODE HERE
-       # clip(a, a_min, a_max, out=None)
-        height, width = self.distance_image.shape[:2]  #h 100, w 200
+
+                    
+        height, width = self.distance_image.shape[:2]
+
         # clip the values
         np.clip(self.W[:,0],0,width-1,self.W[:,0])
         np.clip(self.W[:,1],0,height-1,self.W[:,1])
-        self.C = self.distance_image[self.W[:,1].astype(int), self.W[:,0].astype(int)]  #(60,)
-        #pprint.pprint(self.C)
-        i_min = self.C.argmin()
+        self.C = self.distance_image[self.W[:,1].astype(int), self.W[:,0].astype(int)]
+        i_min = self.C.argmax()
         cost_min = self.C[i_min]
-        print('===============' + str(cost_min))
         if cost_min<self.best_cost:
             self.best_w = self.W[i_min].copy()
             self.best_cost = cost_min
         return cost_min
+
     def mutate(self):
         '''
         Mutate each individual.
@@ -73,12 +75,11 @@ class PatternPosePopulation(population_search.Population):
 
         	# INSERT YOUR CODE HERE
         mutations = np.random.choice([-1,0,1], 4*self.n, replace=True, p = [1/3,1/3,1/3]).reshape(-1,4)
-        mutations[:,2] = 1
-        mutations[:,3] = 0
-        self.W = self.W+mutations  #self.W.shape = (20,4)
+        mutations[:,2]=0.01745329252
+        self.W = self.W+0.25*mutations
+                
     def set_distance_image(self, distance_image):
         self.distance_image = distance_image
-
 
 #------------------------------------------------------------------------------        
 
@@ -95,7 +96,7 @@ def initial_population(region, scale = 10, pop_size=20):
                  np.ones((pop_size,1))*scale
                  #np.random.uniform(low=scale*0.9, high= scale*1.1, size=(pop_size,1))
                         ), axis=1)    
-    return W  #(50,2)
+    return W
 
 #------------------------------------------------------------------------------        
 def test_particle_filter_search():
@@ -115,28 +116,20 @@ def test_particle_filter_search():
         
     # Narrow the initial search region
     pat = pat_list[ipat] #  (100,30, np.pi/3,40),
-    #print(pat_list[ipat])
-    xs, ys = pose_list[ipat][:2]  #xs= 100, ys = 30
+    # print(pat) 
+    xs, ys = pose_list[ipat][:2]
     region = (xs-20, xs+20, ys-20, ys+20)
-    scale = pose_list[ipat][3]  #scale= 40
+    scale = pose_list[ipat][3]
         
-    pop_size=20
-    '''
-    region(80,120,10,50)
-    scale 40
-    pop_size 60
-    '''
-    W = initial_population(region, scale , pop_size)  #W (60,4) 60 pictures with 4 features
-    print(W)
-    print(W.shape)
+    pop_size=200
+    W = initial_population(region, scale , pop_size)
     
     pop = PatternPosePopulation(W, pat)
     pop.set_distance_image(imd)
     
     pop.temperature = 5
-    #Lw 10 elements in 1 list, each element is arrary(50,2)
-    #Lc 10 elements in 1 list, each element is cost
-    Lw, Lc = pop.particle_filter_search(40,log=True)  
+    
+    Lw, Lc = pop.particle_filter_search(100,log=True)
     
     plt.plot(Lc)
     plt.title('Cost vs generation index')
