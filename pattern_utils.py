@@ -11,7 +11,9 @@ The new positions of the vertices is obtained by
  2 - scale the pattern by 'scale'
  3 - translate the pattern to put vertex 0 at position (x,y) 
     
+Last modified on Wed 30th August
 
+Remove the dependency on OpenCV
      
 '''
 import numpy as np
@@ -20,8 +22,11 @@ import matplotlib.pyplot as plt
 #import matplotlib.animation as animation
 
 #from skimage.morphology import medial_axis
-import cv2
+#import cv2
 import skimage
+
+from scipy.ndimage.morphology import distance_transform_cdt
+
 
 # default shape for the created float image
 default_imf_shape = (100,200) # 100 rows, 200 columns
@@ -249,8 +254,9 @@ def dist_image(imf):
     Return the distance image 'imd' of 'imf'
     imd[r,c] is the distance  of pixel (r,c) to the closest edge pixel.
     '''
-    imf_inv = cv2.bitwise_not(skimage.img_as_ubyte(imf)) 
-    imd = cv2.distanceTransform(imf_inv ,cv2.DIST_L2,5)
+    imf_inv = 1 - (skimage.img_as_ubyte(imf) != 0)
+    imd = distance_transform_cdt(imf_inv)
+#    imd = cv2.distanceTransform(imf_inv ,cv2.DIST_L2,5)
 #    plt.imshow(imf_inv)
 #    plt.title('imf_inv')
 #    plt.figure()
@@ -258,6 +264,23 @@ def dist_image(imf):
 #    plt.title('imd')
 #    plt.colorbar()
     return imd
+
+    #-----------------------------------------------------------------------------
+
+#def dist_image_cv2(imf):
+#    '''
+#    Return the distance image 'imd' of 'imf'
+#    imd[r,c] is the distance  of pixel (r,c) to the closest edge pixel.
+#    '''
+#    imf_inv = cv2.bitwise_not(skimage.img_as_ubyte(imf)) 
+#    imd = cv2.distanceTransform(imf_inv ,cv2.DIST_L2,5)
+##    plt.imshow(imf_inv)
+##    plt.title('imf_inv')
+##    plt.figure()
+##    plt.imshow(imd)
+##    plt.title('imd')
+##    plt.colorbar()
+#    return imd
 
 #-----------------------------------------------------------------------------
 
