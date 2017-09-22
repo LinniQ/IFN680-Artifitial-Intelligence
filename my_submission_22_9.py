@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 
 import pattern_utils
 import population_search
+import datetime
 
 #------------------------------------------------------------------------------
 
@@ -152,7 +153,8 @@ def test_particle_filter_search():
     region = (xs-20, xs+20, ys-20, ys+20)
     scale = pose_list[ipat][3]
         
-    pop_size=80
+    pop_size=40
+    date1 = datetime.datetime.now()
     W = initial_population(region, scale , pop_size)
     
     pop = PatternPosePopulation(W, pat)
@@ -161,12 +163,17 @@ def test_particle_filter_search():
     pop.temperature = 5
 
 
-    Lw, Lc = pop.particle_filter_search(100,log=True)  #Lw each individual(x,y,theta,scale)
+    Lw, Lc = pop.particle_filter_search(50,log=True)  #Lw each individual(x,y,theta,scale)
+    
+    date2 = datetime.datetime.now()
+    
+    diff = (date2 - date1).microseconds/1000
     
     plt.plot(Lc)
     plt.title('Cost vs generation index')
     plt.show()
     
+    print("Time:    " + str(diff) + "  millisecond")
     print(pop.best_w)
     print(pop.best_cost)
     
