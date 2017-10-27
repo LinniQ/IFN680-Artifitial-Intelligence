@@ -1,219 +1,439 @@
 '''
+2017 IFN680 Assignment Two - Siamese Network
 
-2017 IFN680 Assignment
+Group 9:
+    Linni Qin n9632981
+    
+    
+'''
+#------------------------------------------------------------------------------
 
-Instructions: 
-    - You should implement the class PatternPosePopulation
-
- '''
-
+import random
 import numpy as np
 import matplotlib.pyplot as plt
-
-
-import pattern_utils
-import population_search
+from tensorflow.contrib import keras
+from tensorflow.contrib.keras import backend as K
+import assign2_utils
 
 #------------------------------------------------------------------------------
 
-class PatternPosePopulation(population_search.Population):
+def euclidean_distance(vects):
     '''
+    Auxiliary function to compute the Euclidian distance between two vectors
+    in a Keras layer.
+    '''
+    x, y = vects
+    return K.sqrt(K.maximum(K.sum(K.square(x - y), axis=1, keepdims=True), K.epsilon()))
+
+#------------------------------------------------------------------------------
+
+def contrastive_loss(y_true, y_pred):
+    '''
+    Contrastive loss from Hadsell-et-al.'06
+    http://yann.lecun.com/exdb/publis/pdf/hadsell-chopra-lecun-06.pdf
+    @param
+      y_true : true label 1 for positive pair, 0 for negative pair
+      y_pred : distance output of the Siamese network    
+    '''
+    margin = 1
+    # if positive pair, y_true is 1, penalize for large distance returned by Siamese network
+    # if negative pair, y_true is 0, penalize for distance smaller than the margin
+    return K.mean(y_true * K.square(y_pred) +
+                  (1 - y_true) * K.square(K.maximum(margin - y_pred, 0)))
+#------------------------------------------------------------------------------
+
+def compute_accuracy(predictions, labels):
+    '''
+    Compute classification accuracy with a fixed threshold on distances.
+    @param 
+      predictions : values computed by the Siamese network
+      labels : 1 for positive pair, 0 otherwise
+    '''
+    # the formula below, compute only the true positive rate]
+    #    return labels[predictions.ravel() < 0.5].mean()
+    n = labels.shape[0]
+    acc =  (labels[predictions.ravel() < 0.5].sum() +  # count True Positive
+               (1-labels[predictions.ravel() >= 0.5]).sum() ) / n  # True Negative
+    return acc
+
+#------------------------------------------------------------------------------
+
+def create_pairs(x, digit_indices):
+    '''
+       Positive and negative pair creation.
+       Alternates between positive and negative pairs.
+       @param
+         digit_indices : list of lists
+            digit_indices[k] is the list of indices of occurences digit k in 
+            the dataset
+       @return
+         P, L 
+         where P is an array of pairs and L an array of labels
+         L[i] ==1 if P[i] is a positive pair
+         L[i] ==0 if P[i] is a negative pair
+         
+    '''
+    pairs = []
+    labels = []
+    n = min([len(digit_indices[d]) for d in range(10)]) - 1
+    for d in range(10):
+        for i in range(n):
+            z1, z2 = digit_indices[d][i], digit_indices[d][i + 1]
+            pairs += [[x[z1], x[z2]]]
+            # z1 and z2 form a positive pair
+            inc = random.randrange(1, 10)
+            dn = (d + inc) % 10
+            z1, z2 = digit_indices[d][i], digit_indices[dn][i]
+            # z1 and z2 form a negative pair
+            pairs += [[x[z1], x[z2]]]
+            labels += [1, 0]
+    return np.array(pairs), np.array(labels)
+     
+#------------------------------------------------------------------------------
+       
+def initial():
+    '''
+    Load the origianl data will calling assing2_utils.
+    Save them into npz file1 (original_data.npz).
     
     '''
-    def __init__(self, W, pat):
-        '''
-        Constructor. Simply pass the initial population to the parent
-        class constructor.
-        @param
-          W : initial population
-        '''
-        self.pat = pat
-        super().__init__(W)
+    x_train, y_train, x_test, y_test  = assign2_utils.load_dataset()      
+
+
+    i_row,i_column = x_train.shape[1:3]
+    channel = 1
+    input_dim = (i_row,i_column,channel)
     
-    def evaluate(self):
-        '''
-        Evaluate the cost of each individual.
-        Store the result in self.C
-        That is, self.C[i] is the cost of the ith individual.
-        Keep track of the best individual seen so far in 
-            self.best_w 
-            self.best_cost cont
-        @return 
-           best cost of this generation            
-        '''
- 
-        	# INSERT YOUR CODE HERE
+    # reshape the input arrays to 4D (batch_size, rows, columns, channels)
+    # convert to float 32
+    x_train = x_train.reshape(x_train.shape[0], *input_dim).astype(np.float32)
+    x_test = x_test.reshape(x_test.shape[0], *input_dim).astype(np.float32)
 
-                    
-        height, width = self.distance_image.shape[:2]
+    # normalized the entries between 0 and 1
+    x_train /= 255 
+    x_test /= 255
+    
+    #save the file into original_data.npz
+    np.savez('original_data.npz', x_train = x_train, y_train = y_train,x_test = x_test,y_test = y_test)
+    file1 ='original_data.npz'
+    return input_dim,file1
+    
 
-        # clip the values
-        np.clip(self.W[:,0],0,width-1,self.W[:,0])  #X coord
-        np.clip(self.W[:,1],0,height-1,self.W[:,1])  #Y coord
-        #self.C = self.distance_image[self.W[:,1].astype(int), self.W[:,0].astype(int)]
-        s = pattern_utils.Triangle(2)
-        imf, imd , pat_list, pose_list = pattern_utils.make_test_image_1(True)
-        #self.C = np.array(s.evaluate(imd,self.W[i,:]))
-        #print('='*40+ str(self.C))
-        search = np.zeros(50)
-        for i in range(50):
-            tup = s.evaluate(imd,self.W[i])
-            search[i] = np.array(tup[0])
-        self.C = np.array(search)
-        i_min = self.C.argmin()
-        cost_min = self.C[i_min]
+#------------------------------------------------------------------------------
+    
+def warped_data(rotation,variation,input_dim,warped_size,file_name):
+
+    '''
+    Create file2 (warped_data.npz) to save the 100,000 warped sample images if required 
+    with using method random_deform from assing2_util
+    
+    The parameter to warp the image will be inputted with testing purposes accordingly in exp2() and exp3()    
+         
+    '''
+    
+    # loading two return values in the method of initial()
+    input_dim,file1 = initial()
+    with np.load(file1) as npzfile:
+        x_train = npzfile['x_train']
+        y_train = npzfile['y_train']
+        x_test = npzfile['x_test']
+        y_test = npzfile['y_test']
+    
+    # create 100,000 samples of warped images by using function random_deform in file assign2_util
+    # random choosing from the original 60,000 images
+    # to enhance the probobility of choosing each images, the other 40,000 is chosen reversedly from the dataset
+    X_train = np.zeros((warped_size,*input_dim))
+    for i in range(60000):
+        X_train[i] = assign2_utils.random_deform(x_train[i],rotation,variation)
+    for j in range(40000):
+        X_train[60000-1 + j] = assign2_utils.random_deform(x_train[random.randint(0,60000-1)],rotation,variation)
         
-        if cost_min<self.best_cost:
-            #self.muT = True
-            self.best_w = self.W[i_min].copy()
-            self.best_cost = cost_min
-            print('-'*40+str(cost_min))
-        return cost_min
+    #save the file into warped_data.npz        
+    np.savez('warped_data.npz', x_train = X_train, y_train = y_train, x_test = x_test, y_test = y_test)
+    file2 = 'warped_data.npz'
+    return file2
 
-    def mutate(self):
-        '''
-        Mutate each individual.
-        The x and y coords should be mutated by adding with equal probability 
-        -1, 0 or +1. That is, with probability 1/3 x is unchanged, with probability
-        1/3 it is decremented by 1 and with the same probability it is 
-        incremented by 1.
-        The angle should be mutated by adding the equivalent of 1 degree in radians.
-        The mutation for the scale coefficient is the same as for the x and y coords.
-        @post:
-          self.W has been mutated.
-        '''
+#------------------------------------------------------------------------------
+  
+def convolutional_neural_networks(y_train,input_dim):
+    '''
+    Create CNN:
+        3 conventional layers and 2 fully connected layers
         
-        assert self.W.shape==(self.n,4)
+    '''
+    num_class = len(np.unique(y_train))
+    seq = keras.models.Sequential() 
+    seq.add(keras.layers.Conv2D(32, kernel_size=(3,3),activation='relu',input_shape=input_dim))
+    #seq.add(keras.layers.Conv2D(64, kernel_size=(3,3),activation='relu'))
+    seq.add(keras.layers.MaxPooling2D((2,2)))
+    seq.add(keras.layers.Dropout(0.25))
+    seq.add(keras.layers.Flatten())
+    #seq.add(keras.layers.Dense(128,activation='relu'))
+    #seq.add(keras.layers.Dropout(0.5))
+    seq.add(keras.layers.Dense(num_class,activation='relu'))
+    return seq
 
-        	# INSERT YOUR CODE HERE
-        mutations = np.random.choice([-1,0,1], 4*self.n, replace=True, p = [1/3,1/3,1/3]).reshape(-1,4).astype(float)
-        mutations[:,2]*= 0.01745
-        self.W = self.W+mutations
-                
-    def set_distance_image(self, distance_image):
-        self.distance_image = distance_image
+#------------------------------------------------------------------------------
 
+def exp1():
+    '''
+    Experiment 1:
+    Train the siamese network on the original dataset
+    
+    '''
+    # file 1 is original_data.npz
+    input_dim,file1 = initial()
+    with np.load(file1) as npzfile:
+        x_train = npzfile['x_train']
+        y_train = npzfile['y_train']
+        x_test = npzfile['x_test']
+        y_test = npzfile['y_test']
+
+    #create paired images with using funciton create_pairs
+    digit_indices = [np.where(y_train == i)[0] for i in range(len(np.unique(y_train)))]
+    tr_pairs, tr_y = create_pairs(x_train, digit_indices)    
+    digit_indices = [np.where(y_test == i)[0] for i in range(len(np.unique(y_test)))]
+    te_pairs, te_y = create_pairs(x_test, digit_indices)
+    
+    # network definition
+    base_network = convolutional_neural_networks(y_train, input_dim)
+    
+    input_a = keras.layers.Input(shape=input_dim)
+    input_b = keras.layers.Input(shape=input_dim)
+    
+    # because we re-use the same instance `base_network`,
+    # the weights of the network
+    # will be shared across the two branches
+    processed_a = base_network(input_a)
+    processed_b = base_network(input_b)
+    
+    # node to compute the distance between the two vectors
+    # processed_a and processed_a
+    distance = keras.layers.Lambda(euclidean_distance)([processed_a, processed_b])
+    
+    # Our model take as input a pair of images input_a and input_b
+    # and output the Euclidian distance of the mapped inputs
+    model = keras.models.Model([input_a, input_b], distance)
+
+    # train the model
+    rms = keras.optimizers.RMSprop()
+    model.compile(loss=contrastive_loss, optimizer=rms)
+    history = model.fit([tr_pairs[:, 0], tr_pairs[:, 1]], tr_y,
+                        batch_size=128,
+                        epochs=epochs,
+                        validation_data=([te_pairs[:, 0], te_pairs[:, 1]], te_y))
+   
+    # evaluate the model
+    pred1 = model.predict([tr_pairs[:, 0], tr_pairs[:, 1]])
+    tr_acc = compute_accuracy(pred1, tr_y)    
+    pred2 = model.predict([te_pairs[:, 0], te_pairs[:, 1]])
+    te_acc = compute_accuracy(pred2, te_y)
+
+    # print the training and text accuracy 
+    print('* Accuracy on training set: %0.2f%%' % (100 * tr_acc))
+    print('* Accuracy on test set: %0.2f%%' % (100 * te_acc))
+
+    #plot the change of the loss for each eposch   
+    plt.plot(history.history['loss'],'r--')
+    plt.plot(history.history['val_loss'], 'g--')
+    plt.title('model loss')
+    plt.ylabel('loss')
+    plt.xlabel('epoch')
+    plt.legend(['train', 'test'], loc='upper right')
+    plt.show()     
+     
+#------------------------------------------------------------------------------
+
+def exp2():
+    '''
+    Experiment 2:
+    Train the siamese network on the warped dataset with hard degree (45 degree, 0.3 strength)
+    
+    '''
+    input_dim,file1 = initial()
+    
+    # call method warped_data to warp the 100,000 image 
+    # with Hard level (rotating 45 degree with 0.3 strength)
+    file2 = warped_data(45, 0.3, input_dim, 100000,file1)
+    with np.load(file2) as npzfile:
+        x_train = npzfile['x_train']
+        y_train = npzfile['y_train']
+        x_test = npzfile['x_test']
+        y_test = npzfile['y_test']
+
+    #create paired images with using funciton create_pairs
+    digit_indices = [np.where(y_train == i)[0] for i in range(len(np.unique(y_train)))]    
+    tr_pairs_H, tr_y_H = create_pairs(x_train, digit_indices)    
+    digit_indices = [np.where(y_test == i)[0] for i in range(len(np.unique(y_test)))]    
+    te_pairs_H, te_y_H = create_pairs(x_test, digit_indices)
+    
+    # network definition
+    base_network = convolutional_neural_networks(y_train, input_dim)
+    
+    input_a = keras.layers.Input(shape=input_dim)
+    input_b = keras.layers.Input(shape=input_dim)
+    
+    # because we re-use the same instance `base_network`,
+    # the weights of the network
+    # will be shared across the two branches
+    processed_a = base_network(input_a)
+    processed_b = base_network(input_b)
+    
+    # node to compute the distance between the two vectors
+    # processed_a and processed_a
+    distance = keras.layers.Lambda(euclidean_distance)([processed_a, processed_b])
+    
+    # Our model take as input a pair of images input_a and input_b
+    # and output the Euclidian distance of the mapped inputs
+    model = keras.models.Model([input_a, input_b], distance)
+
+    # train the model
+    rms = keras.optimizers.RMSprop()
+    model.compile(loss=contrastive_loss, optimizer=rms)
+    history = model.fit([tr_pairs_H[:, 0], tr_pairs_H[:, 1]], tr_y_H,
+                        batch_size=128,
+                        epochs=epochs,
+                        validation_data=([te_pairs_H[:, 0], te_pairs_H[:, 1]], te_y_H))
+    
+    # evaluate the model
+    pred1 = model.predict([tr_pairs_H[:, 0], tr_pairs_H[:, 1]])
+    tr_acc = compute_accuracy(pred1, tr_y_H)    
+    pred2 = model.predict([te_pairs_H[:, 0], te_pairs_H[:, 1]])
+    te_acc = compute_accuracy(pred2, te_y_H)
+
+    # print the training and test accuracy
+    print('* Accuracy on training set: %0.2f%%' % (100 * tr_acc))
+    print('* Accuracy on test set: %0.2f%%' % (100 * te_acc))
+    
+    #plot the change of the loss for each eposch
+    plt.plot(history.history['loss'],'r--')
+    plt.plot(history.history['val_loss'], 'g--')
+    plt.title('model loss')
+    plt.ylabel('loss')
+    plt.xlabel('epoch')
+    plt.legend(['train', 'test'], loc='upper right')
+    plt.show()     
+    
+#------------------------------------------------------------------------------
+
+def exp3():
+    '''
+    Experiment 3:
+    Train the siamese network on the significant easier dataset of warped images with 15 degree rotation
+    and a projective transormation with a "strength" of 0.1.
+    Then train the network on the hard dataset (45 degree, 0.3 strength)
+    
+    '''   
+    
+    input_dim,file1 = initial()
+    
+
+    # call method warped_data to warp the 100,000 image 
+    # with Easy level (rotating 15 degree with 0.1 strength)
+    # the rotation degree and parameter for strength can be changed if needed within experimental 3
+    file_E = warped_data(15, 0.1, input_dim, 100000,file1)
+    with np.load(file_E) as npzfile:
+        x_train = npzfile['x_train']
+        y_train = npzfile['y_train']
+        x_test = npzfile['x_test']
+        y_test = npzfile['y_test']  
+
+    #create Easy paird images with using method create_pairs
+    digit_indices = [np.where(y_train == i)[0] for i in range(len(np.unique(y_train)))]    
+    tr_pairs_E, tr_y_E = create_pairs(x_train, digit_indices)    
+    digit_indices = [np.where(y_test == i)[0] for i in range(len(np.unique(y_test)))]    
+    te_pairs_E, te_y_E = create_pairs(x_test, digit_indices)
+    
+    # call method warped_data to warp the 100,000 image 
+    # with Hard level (rotating 45 degree with 0.3 strength)
+    # the rotation degree and parameter for strength can be changed if needed within experimental 3
+    file_H = warped_data(45, 0.3, input_dim, 100000,file1)
+    with np.load(file_H) as npzfile:
+        x_train = npzfile['x_train']
+        y_train = npzfile['y_train']
+        x_test = npzfile['x_test']
+        y_test = npzfile['y_test']
+
+    #create Hard paird images with using funciton create_pairs
+    digit_indices = [np.where(y_train == i)[0] for i in range(len(np.unique(y_train)))]
+    tr_pairs_H, tr_y_H = create_pairs(x_train, digit_indices)    
+    digit_indices = [np.where(y_test == i)[0] for i in range(len(np.unique(y_test)))]
+    te_pairs_H, te_y_H = create_pairs(x_test, digit_indices)
+    
+    # network definition
+    base_network = convolutional_neural_networks(y_train, input_dim)
+    
+    input_a = keras.layers.Input(shape=input_dim)
+    input_b = keras.layers.Input(shape=input_dim)
+    
+    # because we re-use the same instance `base_network`,
+    # the weights of the network
+    # will be shared across the two branches
+    processed_a = base_network(input_a)
+    processed_b = base_network(input_b)
+    
+    # node to compute the distance between the two vectors
+    # processed_a and processed_a
+    distance = keras.layers.Lambda(euclidean_distance)([processed_a, processed_b])
+    
+    # Our model take as input a pair of images input_a and input_b
+    # and output the Euclidian distance of the mapped inputs
+    model = keras.models.Model([input_a, input_b], distance)
+
+    rms = keras.optimizers.RMSprop()
+    model.compile(loss=contrastive_loss, optimizer=rms)
+    
+    #train the model on Easy dataset
+    history_E = model.fit([tr_pairs_E[:, 0], tr_pairs_E[:, 1]], tr_y_E,
+                        batch_size=128,
+                        epochs=epochs,
+                        validation_data=([te_pairs_E[:, 0], te_pairs_E[:, 1]], te_y_E))  
+    
+    #train the model on Hard dataset
+    history_H = model.fit([tr_pairs_H[:, 0], tr_pairs_H[:, 1]], tr_y_H,
+                        batch_size=128,
+                        epochs=epochs,
+                        validation_data=([te_pairs_H[:, 0], te_pairs_H[:, 1]], te_y_H))
+    
+    #evaluate the model on Hard dataset
+    pred1 = model.predict([tr_pairs_H[:, 0], tr_pairs_H[:, 1]])
+    tr_acc = compute_accuracy(pred1, tr_y_H)
+    
+    pred2 = model.predict([te_pairs_H[:, 0], te_pairs_H[:, 1]])
+    te_acc = compute_accuracy(pred2, te_y_H)
+
+    #print the training and test accuracy
+    print('* Accuracy on training set: %0.2f%%' % (100 * tr_acc))
+    print('* Accuracy on test set: %0.2f%%' % (100 * te_acc))
+    
+    #plot the change of the loss for each eposch based on training the easy dataset
+    plt.plot(history_E.history['loss'],'r--')
+    plt.plot(history_E.history['val_loss'], 'g--')
+    plt.title('Easy model loss')
+    plt.ylabel('loss')
+    plt.xlabel('epoch')
+    plt.legend(['train', 'test'], loc='upper right')
+    plt.show()    
+    
+    #plot the change of the loss for each eposch based on training the hard dataset
+    plt.plot(history_H.history['loss'],'r--')
+    plt.plot(history_H.history['val_loss'], 'g--')
+    plt.title('Hard model loss')
+    plt.ylabel('loss')
+    plt.xlabel('epoch')
+    plt.legend(['train', 'test'], loc='upper right')
+    plt.show()   
+     
 #------------------------------------------------------------------------------        
-
-def initial_population(region, scale = 10, pop_size=20):
-    '''
-    
-    '''        
-    # initial population: exploit info from region
-    rmx, rMx, rmy, rMy = region
-    W = np.concatenate( (
-                 np.random.uniform(low=rmx,high=rMx, size=(pop_size,1)) ,
-                 np.random.uniform(low=rmy,high=rMy, size=(pop_size,1)) ,
-                 np.random.uniform(low=-np.pi,high=np.pi, size=(pop_size,1)) ,
-                 np.ones((pop_size,1))*scale
-                 #np.random.uniform(low=scale*0.9, high= scale*1.1, size=(pop_size,1))
-                        ), axis=1)    
-    return W
-
-#------------------------------------------------------------------------------        
-def test_particle_filter_search():
-    '''
-    Run the particle filter search on test image 1 or image 2of the pattern_utils module
-    
-    '''
-    
-    if True:
-        # use image 1
-        imf, imd , pat_list, pose_list = pattern_utils.make_test_image_1(True)
-        ipat = 2 # index of the pattern to target
-    else:
-        # use image 2
-        imf, imd , pat_list, pose_list = pattern_utils.make_test_image_2(True)
-        ipat = 0 # index of the pattern to target
-        
-    # Narrow the initial search region
-    pat = pat_list[ipat] #  (100,30, np.pi/3,40),
-    # print(pat) 
-    xs, ys = pose_list[ipat][:2]  #(100, 30, 1.0471975511965976, 40)
-    region = (xs-20, xs+20, ys-20, ys+20)
-    scale = pose_list[ipat][3]
-        
-    pop_size=50
-    W = initial_population(region, scale , pop_size)
-    
-    pop = PatternPosePopulation(W, pat)
-    pop.set_distance_image(imd)
-    
-    pop.temperature = 5
-    #r_pat = Pattern()
-    #aaa , bbb= r_pat.evaluate()
-    #print(aaa)
-    #print(bbb)
-
-    Lw, Lc = pop.particle_filter_search(200,log=True)  #Lw each individual(x,y,theta,scale)
-    
-    plt.plot(Lc)
-    plt.title('Cost vs generation index')
-    plt.show()
-    
-    print(pop.best_w)
-    print(pop.best_cost)
-    
-        
-    pattern_utils.display_solution(pat_list, 
-                      pose_list, 
-                      pat,
-                      pop.best_w)
-                      
-    pattern_utils.replay_search(pat_list, 
-                      pose_list, 
-                      pat,
-                      Lw)
 #------------------------------------------------------------------------------        
 
 if __name__=='__main__':
-    test_particle_filter_search()
     
-    
+    epochs = 3
+    #exp1()
+    #exp2()
+    exp3()
+
 # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 #                               CODE CEMETARY        
-    
-#        
-#    def test_2():
-#        '''
-#        Run the particle filter search on test image 2 of the pattern_utils module
-#        
-#        '''
-#        imf, imd , pat_list, pose_list = pattern_utils.make_test_image_2(False)
-#        pat = pat_list[0]
-#        
-#        #region = (100,150,40,60)
-#        xs, ys = pose_list[0][:2]
-#        region = (xs-20, xs+20, ys-20, ys+20)
-#        
-#        W = initial_population_2(region, scale = 30, pop_size=40)
-#        
-#        pop = PatternPosePopulation(W, pat)
-#        pop.set_distance_image(imd)
-#        
-#        pop.temperature = 5
-#        
-#        Lw, Lc = pop.particle_filter_search(40,log=True)
-#        
-#        plt.plot(Lc)
-#        plt.title('Cost vs generation index')
-#        plt.show()
-#        
-#        print(pop.best_w)
-#        print(pop.best_cost)
-#        
-#        
-#        
-#        pattern_utils.display_solution(pat_list, 
-#                          pose_list, 
-#                          pat,
-#                          pop.best_w)
-#                          
-#        pattern_utils.replay_search(pat_list, 
-#                          pose_list, 
-#                          pat,
-#                          Lw)
-#    
-#    #------------------------------------------------------------------------------        
-#        
     
